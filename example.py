@@ -1,78 +1,65 @@
 from __future__ import print_function
-import pygatt
-import struct
+import sys
+import pygatt.backends
 import logging
 from ConfigParser import SafeConfigParser
 import time
+import subprocess
+from struct import *
+from binascii import hexlify
 import os
+import threading
 
-# Setting up logging
-log = logging.getLogger()
-log.setLevel(logging.DEBUG)
+import pygatt
 
-# Read configuration from ini file
-config = SafeConfigParser()
-config.read('config.ini')
+class RACPHandler(pygatt.backends.BGAPIBackendDelegate):
+    def __init__(self):
+        pygatt.backends.BGAPIBackendDelegate.__init__(self)
+        self.records = []
 
-# Set up BLE adapter
-adapter = pygatt.backends.BGAPIBackend()
+    def handleNotification(self, handle, value):
+        if handle == 0x2F:
+            # Handle glucose measurement notifications
+            self.records.append(value)
+            print("Received glucose measurement:", value)
 
-# Device characteristics
-Char_glucose = "00002a18-0000-1000-8000-00805f9b34fb"
+class GlucoseMonitor:
+    def __init__(self, mac_address):
+        self.adapter = pygatt.backends.BGAPIBackend()
+        self.adapter.start()
+        self.adapter.delegate = RACPHandler()
+        self.device = self.adapter.connect(mac_address)
+        self.service = self.device.discover_characteristic("00001808-0000-1000-8000-00805f9b34fb")
 
-# Wait for the device to be ready
-def wait_for_device(device_name):
+    def read_all_records(self):
+        # Send RACP command [1,1] to read all records
+        self.service.write(bytes([1, 1]),True)
+
+    def read_first_record(self):
+        # Send RACP command [1,5] to read first record
+        self.service.write(bytes([1, 5]),True)
+
+    def read_last_record(self):
+        # Send RACP command [1,6] to read last record received
+        self.service.write(bytes([1, 6]),True)
+
+    def read_record_from(self, record_num):
+        # Send RACP command [1,3,1,record_num,0] to read extract from record record_num onwards
+        command = struct.pack("<BBBBB", 1, 3, 1, record_num, 0)
+        self.service.write(command,True)
+
+    def num_records(self):
+        # Send RACP command [4,1] to get number of records
+        self.service.write(bytes([4, 1]),True)
+
+    def subscribe_glucose_measurement(self):
+        # Register for glucose measurement notifications
+        self.device.subscribe("00002a18-0000-1000-8000-00805f9b34fb",callback=self.handleNotification)
+
+if __name__ == "__main__":
+    mac_address = "00:81:F9:B2:24:74" # Replace with the MAC address of your BGM
+    monitor = GlucoseMonitor(mac_address)
+    monitor.subscribe_glucose_measurement()
     while True:
-        try:
-            adapter.start()
-            device = adapter.connect(config.get('GLUCOSE', 'ble_address'))
-            log.debug("Device %s is ready" % device_name)
-            return device
-        except pygatt.exceptions.NotConnectedError:
-            log.debug("Waiting for device %s to be ready" % device_name)
-            time.sleep(1)
-        finally:
-            adapter.stop()
-
-# Connect to the device
-def connect_device(ble_address):
-    try:
-        device = adapter.connect(ble_address)
-        log.debug("Device connected")
-        return device
-    except pygatt.exceptions.NotConnectedError:
-        log.debug("Could not connect to device")
-        return None
-
-# Process the glucose reading received
-def processIndication(handle, value):
-    glucose = struct.unpack('h', value)[0]/18.0
-    log.debug("Latest glucose reading: %s" % glucose)
-    return glucose
-
-while True:
-    device = connect_device(config.get('GLUCOSE', 'ble_address'))
-    if device:
-        glucose = []
-        handle_glucose = device.get_handle(Char_glucose)
-        continue_comms = True
-        try:
-            device.subscribe(Char_glucose,
-                             callback=processIndication,
-                             indication=True)
-        except pygatt.exceptions.NotConnectedError:
-            continue_comms = False
-        if continue_comms:
-            log.debug('Waiting for notifications for another 30 seconds')
-            time.sleep(30)
-            try:
-                device.disconnect()
-            except pygatt.exceptions.NotConnectedError:
-                log.debug('Could not disconnect...')
-            log.debug('Done receiving glucose data')
-            if glucose:
-                glucose_sorted = sorted(glucose, key=lambda k: k['timestamp'], reverse=True)
-                latest_glucose = glucose_sorted[0]
-                log.debug("Latest glucose reading: %s" % latest_glucose)
-            else:
-                log.error('No glucose data received')
+        monitor.read_last_record()
+        time.sleep(1)
