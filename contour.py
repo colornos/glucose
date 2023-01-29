@@ -6,8 +6,8 @@ from pygatt.exceptions import NotConnectedError
 log = logging.getLogger(__name__)
 
 # Get the BLE address and device name from the configuration file
-ble_address = "00:0a:e2:64:25:86"
-device_name = "CONTOURONE-586"
+ble_address = "00:81:F9:B2:24:74"
+device_name = "Contour7830H7002817"
 
 # Connect to the glucose meter device
 def connect_device(ble_address):
