@@ -39,7 +39,7 @@ adapter.start()
 addresstype = pygatt.BLEAddressType.random
 
 # Connect to device
-address = "XX:XX:XX:XX:XX:XX"  # replace with actual device address
+address = "00:81:F9:B2:24:74"  # replace with actual device address
 device = adapter.connect(address, address_type=addresstype)
 
 def processIndication(handle, value):
