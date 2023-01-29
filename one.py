@@ -1,71 +1,61 @@
-from __future__ import print_function
-import sys
-import pygatt.backends
 import logging
-from ConfigParser import SafeConfigParser
+import pygatt
+from pygatt.exceptions import NotConnectedError, NotificationTimeout
 import time
-import subprocess
-from struct import *
-from binascii import hexlify
-import os
-import thread
+from struct import unpack
 
-# RACP commands
-RACP_COMMAND_REPORT_STORED_RECORDS = [1,1]
-RACP_COMMAND_REPORT_NUMBER_OF_STORED_RECORDS = [4,1]
-RACP_COMMAND_DELETE_STORED_RECORDS = [3,1]
-RACP_COMMAND_ABORT_OPERATION = [0,0]
-RACP_COMMAND_REPORT_LAST_STORED_RECORD = [1,6]
-RACP_COMMAND_REPORT_FIRST_STORED_RECORD = [1,5]
+# Create a logger for logging debugging information
+log = logging.getLogger(__name__)
 
-# RACP response codes
-RACP_RESPONSE_SUCCESS = [1]
-RACP_RESPONSE_NO_RECORDS_FOUND = [2]
-RACP_RESPONSE_OP_CODE_NOT_SUPPORTED = [3]
-RACP_RESPONSE_INVALID_OPERATOR = [4]
-RACP_RESPONSE_OPERATOR_NOT_SUPPORTED = [5]
-RACP_RESPONSE_INVALID_OPERAND = [6]
-RACP_RESPONSE_NO_COMMAND_IN_PROGRESS = [7]
-RACP_RESPONSE_ABORT_UNSUCCESSFUL = [8]
+# Get the BLE address and device name from the configuration file
+ble_address = "00:81:F9:B2:24:74"
+device_name = "Contour7830H7002817"
 
-# Interesting characteristics
-RACP_UUID = '00002a52-0000-1000-8000-00805f9b34fb'  # RACP
+# Connect to the glucose meter device
+def connect_device(ble_address):
+    try:
+        adapter = pygatt.GATTToolBackend()
+        adapter.start()
+        device = adapter.connect(ble_address)
+        return device
+    except pygatt.exceptions.NotConnectedError:
+        log.error("Failed to connect to device")
+        return None
 
-glucose_data = []
+# Send RACP command to read all records
+def read_all_records(device):
+    try:
+        racp_handle = device.get_handle("00002a52-0000-1000-8000-00805f9b34fb")
+        device.char_write_handle(racp_handle, [1,1])
+    except pygatt.exceptions.NotConnectedError:
+        log.error("Failed to send RACP command to read all records")
 
-# BLE adapter setup
-adapter = pygatt.GATTToolBackend()
-adapter.start()
-addresstype = pygatt.BLEAddressType.random
+# Send RACP command to read last record received
+def read_last_record(device):
+    try:
+        racp_handle = device.get_handle("00002a52-0000-1000-8000-00805f9b34fb")
+        device.char_write_handle(racp_handle, [1,6])
+    except pygatt.exceptions.NotConnectedError:
+        log.error("Failed to send RACP command to read last record")
 
-# Connect to device
-address = "00:81:F9:B2:24:74"  # replace with actual device address
-device = adapter.connect(address, address_type=addresstype)
+# Send RACP command to read number of records
+def read_number_of_records(device):
+    try:
+        racp_handle = device.get_handle("00002a52-0000-1000-8000-00805f9b34fb")
+        device.char_write_handle(racp_handle, [4,1])
+    except pygatt.exceptions.NotConnectedError:
+        log.error("Failed to send RACP command to read number of records")
 
-def processIndication(handle, value):
-    """
-    Indication handler:
-    Receives indication and stores values into result Dict
-    (see decode functions for Dict definition)
-    handle: byte
-    value: bytearray
-    """
-    if handle == RACP_UUID:
-        glucose_data.append(value)
+# Send RACP command to read extract from record 45 onwards
+def read_extract_from_record(device):
+    try:
+        racp_handle = device.get_handle("00002a52-0000-1000-8000-00805f9b34fb")
+        device.char_write_handle(racp_handle, [1,3,1,45,0])
+    except pygatt.exceptions.NotConnectedError:
+        log.error("Failed to send RACP command to read extract from record 45")
 
-# Enable notifications for RACP
-device.subscribe(RACP_UUID, callback=processIndication)
-
-# Send RACP command to read last glucose record received
-device.char_write(RACP_UUID, bytearray(RACP_COMMAND_REPORT_LAST_STORED_RECORD))
-
-# Wait for data
-while True:
-    if glucose_data:
-        print(glucose_data[-1])
-        break
-    time.sleep(1)
-
-# Close connection
-device.disconnect()
-adapter.stop()
+# Subscribe to the glucose measurement characteristic
+def subscribe_to_glucose(device):
+    try:
+        glucose_handle = device.get_handle("00002a18-0000-1000-8000-00805f9b34fb")
+        device.subscribe(glucose_handle
